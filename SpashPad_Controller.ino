@@ -28,6 +28,7 @@ bool valveState[NUM_VALVES] = { false };
 
 float temperature = 0.0;
 float onTempThreshold = 40.0;
+float lightningDistance = 20.0;  // Default to "no danger"
 int maxValvesAtOnce = 3;
 
 unsigned long lastMotionMillis = 0;
@@ -79,6 +80,9 @@ void reconnect() {
         snprintf(topic, sizeof(topic), "%s%s", topicPrefix, subs[i]);
         client.subscribe(topic);
       }
+
+      // Subscribe to shared weather topic
+      client.subscribe("splashpad/weather");
     } else {
       delay(5000);
     }
@@ -115,6 +119,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     client.publish(fullTopic, "{\"status\":\"RESTARTING\"}", true);
     delay(1000);
     asm volatile ("jmp 0");
+  } else if (t == "splashpad/weather") {
+    StaticJsonDocument<256> doc;
+    if (!deserializeJson(doc, message)) {
+      if (doc.containsKey("temp")) temperature = doc["temp"];
+      if (doc.containsKey("lightning")) {
+        lightningDistance = doc["lightning"];
+        if (lightningDistance <= 20.0) {
+          enabled = false;
+          publishStatus("LIGHTNING_SHUTOFF");
+        }
+      }
+    }
   }
 }
 
@@ -145,7 +161,7 @@ void publishStatus(const char* status) {
 
   char buffer[512];
   snprintf(buffer, sizeof(buffer),
-    "{\"status\":\"%s\",\"name\":\"%s\",\"enabled\":%s,\"temperature\":%.1f,\"on_temp\":%.1f,\"valve_active\":%s,\"valves\":[%s],\"max_valves\":%d,\"maintenance\":%s,\"motion\":\"%s\",\"timer_remaining\":%lu,\"location\":\"%s\"}",
+    "{\"status\":\"%s\",\"name\":\"%s\",\"enabled\":%s,\"temperature\":%.1f,\"on_temp\":%.1f,\"valve_active\":%s,\"valves\":[%s],\"max_valves\":%d,\"maintenance\":%s,\"motion\":\"%s\",\"timer_remaining\":%lu,\"lightning_distance\":%.1f,\"location\":\"%s\"}",
     status,
     CONTROLLER_NAME,
     enabled ? "true" : "false",
@@ -157,6 +173,7 @@ void publishStatus(const char* status) {
     maintenanceMode ? "true" : "false",
     motion,
     remaining,
+    lightningDistance,
     CONTROLLER_LOCATION);
 
   char fullTopic[80];
