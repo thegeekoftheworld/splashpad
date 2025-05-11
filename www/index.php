@@ -41,6 +41,10 @@ if (isset($_GET['ajax'])) {
     } elseif ($current_hour < 1 || $current_hour >= 20) {
         $icon = '🌙';
         $message = 'Open daily from 10 AM – 8 PM.';
+    } elseif (($control['status'] ?? '') == "LIGHTNING_SHUTOFF") {
+        $icon = '⚡';
+        $message = 'Splash pad is off due to lightning in the area.';
+        $status = 'Lightning';
     }
 
     echo json_encode([
