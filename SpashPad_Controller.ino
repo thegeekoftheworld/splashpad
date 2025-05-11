@@ -38,6 +38,16 @@ unsigned long lastTimerPublish = 0;
 unsigned long lastConfigHeartbeat = 0;
 unsigned long nextResetMillis = 0;
 
+enum ControllerMode {
+  MODE_AUTO,
+  MODE_OFF,
+  MODE_MAINTENANCE_ON,
+  MODE_MAINTENANCE_OFF,
+  MODE_MAINTENANCE_FORCED_ON
+};
+
+ControllerMode currentMode = MODE_AUTO; // Default mode
+
 void setupEthernet() {
   Ethernet.init(10);
   bool macSet = true;
@@ -74,8 +84,8 @@ void reconnect() {
       serializeJson(idDoc, identityJson);
       client.publish(identityTopic, identityJson, true);
 
-      const char* subs[] = {"weather/temp", "controller/enable", "controller/config", "controller/reset", "controller/maintenance"};
-      for (int i = 0; i < 5; i++) {
+      const char* subs[] = {"controller/enable", "controller/config", "controller/reset", "controller/maintenance"};
+      for (int i = 0; i < 4; i++) {
         char topic[80];
         snprintf(topic, sizeof(topic), "%s%s", topicPrefix, subs[i]);
         client.subscribe(topic);
@@ -96,9 +106,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   if (t.endsWith("controller/enable")) {
     enabled = (message == "ON");
-  } else if (t.endsWith("weather/temp")) {
-    temperature = message.toFloat();
-    publishStatus(enabled ? (valveCycleActive ? "ON" : "IDLE") : "OFF");
   } else if (t.endsWith("controller/maintenance")) {
     maintenanceMode = (message == "ON");
   } else if (t.endsWith("controller/config")) {
@@ -108,6 +115,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       if (doc.containsKey("max_valves")) {
         int val = doc["max_valves"].as<int>();
         if (val > 0 && val <= NUM_VALVES) maxValvesAtOnce = val;
+      }
+      if (doc.containsKey("enable")) enabled = (doc["enable"].as<String>() == "ON");
+      if (doc.containsKey("maintenance")) maintenanceMode = (doc["maintenance"].as<String>() == "ON");
+      if (doc.containsKey("mode")) {
+        String mode = doc["mode"].as<String>();
+        if (mode == "AUTO") setControllerMode(MODE_AUTO);
+        else if (mode == "OFF") setControllerMode(MODE_OFF);
+        else if (mode == "MAINTENANCE_ON") setControllerMode(MODE_MAINTENANCE_ON);
+        else if (mode == "MAINTENANCE_OFF") setControllerMode(MODE_MAINTENANCE_OFF);
+        else if (mode == "MAINTENANCE_FORCED_ON") setControllerMode(MODE_MAINTENANCE_FORCED_ON);
       }
     }
   } else if (t.endsWith("controller/reset")) {
@@ -122,7 +139,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   } else if (t == "splashpad/weather") {
     StaticJsonDocument<256> doc;
     if (!deserializeJson(doc, message)) {
-      if (doc.containsKey("temp")) temperature = doc["temp"];
+      if (doc.containsKey("temp")) {
+        temperature = doc["temp"];
+        publishStatus(enabled ? (valveCycleActive ? "ON" : "IDLE") : "OFF");
+      }
       if (doc.containsKey("lightning")) {
         lightningDistance = doc["lightning"];
         if (lightningDistance <= 20.0) {
@@ -130,6 +150,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           publishStatus("LIGHTNING_SHUTOFF");
         }
       }
+    }
+  } else if (t.endsWith("controller/mode")) {
+    if (message == "AUTO") {
+      setControllerMode(MODE_AUTO);
+    } else if (message == "OFF") {
+      setControllerMode(MODE_OFF);
+    } else if (message == "MAINTENANCE_ON") {
+      setControllerMode(MODE_MAINTENANCE_ON);
+    } else if (message == "MAINTENANCE_OFF") {
+      setControllerMode(MODE_MAINTENANCE_OFF);
+    } else if (message == "MAINTENANCE_FORCED_ON") {
+      setControllerMode(MODE_MAINTENANCE_FORCED_ON);
     }
   }
 }
@@ -204,6 +236,38 @@ void scheduleNextReset() {
   unsigned long base = 24UL * 60 * 60 * 1000;
   unsigned long extra = (1 + random(6)) * 60UL * 60 * 1000;
   nextResetMillis = millis() + base + extra;
+}
+
+void setControllerMode(ControllerMode mode) {
+  currentMode = mode;
+  switch (mode) {
+    case MODE_AUTO:
+      enabled = true;
+      maintenanceMode = false;
+      break;
+    case MODE_OFF:
+      enabled = false;
+      maintenanceMode = false;
+      turnOffAllValves();
+      break;
+    case MODE_MAINTENANCE_ON:
+      enabled = true; // Allow the system to run in maintenance mode unless explicitly off
+      maintenanceMode = true;
+      break;
+    case MODE_MAINTENANCE_OFF:
+      enabled = false; // Explicitly disable the system
+      maintenanceMode = false;
+      turnOffAllValves();
+      break;
+    case MODE_MAINTENANCE_FORCED_ON:
+      enabled = true; // Force the system to run regardless of conditions
+      maintenanceMode = true;
+      valveCycleActive = true; // Start as if motion was detected
+      publishStatus("ON");
+      switchRandomValves();
+      break;
+  }
+  publishStatus("MODE_CHANGED");
 }
 
 void setup() {
