@@ -105,4 +105,4 @@ The controller resets itself every 24 hours + 1–6 hour randomized buffer to pr
 
 ## 📜 License
 
-MIT License
+GPL-3.0 license
