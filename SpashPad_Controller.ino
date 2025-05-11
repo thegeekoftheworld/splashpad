@@ -4,10 +4,12 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 
-#define MQTT_HOST "mqtthost.domain.tld"
+#define MQTT_HOST "mqtt.cprd.us"
 #define MQTT_PORT 1883
 #define MQTT_USER "mqtt_user"
 #define MQTT_PASS "mqtt_pass"
+#define CONTROLLER_NAME "SplashPad Main"
+#define CONTROLLER_LOCATION "Park Center"
 
 const int NUM_VALVES = 12;
 const int valvePins[NUM_VALVES] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, A0, A1};
@@ -59,8 +61,18 @@ void reconnect() {
   while (!client.connected()) {
     char lwtTopic[80];
     snprintf(lwtTopic, sizeof(lwtTopic), "%scontroller/status", topicPrefix);
+    char identityTopic[80];
+    snprintf(identityTopic, sizeof(identityTopic), "%scontroller/identity", topicPrefix);
+
     if (client.connect("valveController", MQTT_USER, MQTT_PASS, lwtTopic, 1, true, "{\"status\":\"OFFLINE\"}")) {
       publishStatus("ONLINE");
+      StaticJsonDocument<128> idDoc;
+      idDoc["name"] = CONTROLLER_NAME;
+      idDoc["location"] = CONTROLLER_LOCATION;
+      char identityJson[128];
+      serializeJson(idDoc, identityJson);
+      client.publish(identityTopic, identityJson, true);
+
       const char* subs[] = {"weather/temp", "controller/enable", "controller/config", "controller/reset", "controller/maintenance"};
       for (int i = 0; i < 5; i++) {
         char topic[80];
@@ -133,8 +145,9 @@ void publishStatus(const char* status) {
 
   char buffer[512];
   snprintf(buffer, sizeof(buffer),
-    "{\"status\":\"%s\",\"enabled\":%s,\"temperature\":%.1f,\"on_temp\":%.1f,\"valve_active\":%s,\"valves\":[%s],\"max_valves\":%d,\"maintenance\":%s,\"motion\":\"%s\",\"timer_remaining\":%lu}",
+    "{\"status\":\"%s\",\"name\":\"%s\",\"enabled\":%s,\"temperature\":%.1f,\"on_temp\":%.1f,\"valve_active\":%s,\"valves\":[%s],\"max_valves\":%d,\"maintenance\":%s,\"motion\":\"%s\",\"timer_remaining\":%lu,\"location\":\"%s\"}",
     status,
+    CONTROLLER_NAME,
     enabled ? "true" : "false",
     temperature,
     onTempThreshold,
@@ -143,7 +156,8 @@ void publishStatus(const char* status) {
     maxValvesAtOnce,
     maintenanceMode ? "true" : "false",
     motion,
-    remaining);
+    remaining,
+    CONTROLLER_LOCATION);
 
   char fullTopic[80];
   snprintf(fullTopic, sizeof(fullTopic), "%scontroller/status", topicPrefix);
