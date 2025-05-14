@@ -4,15 +4,15 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 
-#define MQTT_HOST "mqtt.cprd.us"
+#define MQTT_HOST "mqtt.domain.tld"
 #define MQTT_PORT 1883
 #define MQTT_USER "mqtt_user"
 #define MQTT_PASS "mqtt_pass"
 #define CONTROLLER_NAME "SplashPad Main"
 #define CONTROLLER_LOCATION "Park Center"
 
-const int NUM_VALVES = 12;
-const int valvePins[NUM_VALVES] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, A0, A1};
+const int NUM_VALVES = 13;
+const int valvePins[NUM_VALVES] = {22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34};
 const int motionPin = 2;
 
 byte mac[6];
@@ -28,7 +28,7 @@ bool valveState[NUM_VALVES] = { false };
 
 float temperature = 0.0;
 float onTempThreshold = 40.0;
-float lightningDistance = 20.0;  // Default to "no danger"
+float lightningDistance = 20.0;
 int maxValvesAtOnce = 3;
 
 unsigned long lastMotionMillis = 0;
@@ -46,7 +46,7 @@ enum ControllerMode {
   MODE_MAINTENANCE_FORCED_ON
 };
 
-ControllerMode currentMode = MODE_AUTO; // Default mode
+ControllerMode currentMode = MODE_AUTO;
 
 void setupEthernet() {
   Ethernet.init(10);
@@ -57,9 +57,10 @@ void setupEthernet() {
   }
   if (!macSet) {
     mac[0] = 0x00; mac[1] = 0x10; mac[2] = 0xA4;
-    for (int i = 3; i < 6; i++) mac[i] = random(0, 255);
-    for (int i = 0; i < 6; i++) EEPROM.write(i, mac[i]);
-    EEPROM.commit();
+    for (int i = 3; i < 6; i++) {
+      mac[i] = random(0, 255);
+      EEPROM.write(i, mac[i]);
+    }
   }
   snprintf(topicPrefix, sizeof(topicPrefix), "splashpad/%02X%02X%02X%02X%02X%02X/",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -84,14 +85,13 @@ void reconnect() {
       serializeJson(idDoc, identityJson);
       client.publish(identityTopic, identityJson, true);
 
-      const char* subs[] = {"controller/enable", "controller/config", "controller/reset", "controller/maintenance"};
-      for (int i = 0; i < 4; i++) {
+      const char* subs[] = {"controller/enable", "controller/config", "controller/reset", "controller/maintenance", "controller/mode"};
+      for (int i = 0; i < 5; i++) {
         char topic[80];
         snprintf(topic, sizeof(topic), "%s%s", topicPrefix, subs[i]);
         client.subscribe(topic);
       }
 
-      // Subscribe to shared weather topic
       client.subscribe("splashpad/weather");
     } else {
       delay(5000);
@@ -152,17 +152,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       }
     }
   } else if (t.endsWith("controller/mode")) {
-    if (message == "AUTO") {
-      setControllerMode(MODE_AUTO);
-    } else if (message == "OFF") {
-      setControllerMode(MODE_OFF);
-    } else if (message == "MAINTENANCE_ON") {
-      setControllerMode(MODE_MAINTENANCE_ON);
-    } else if (message == "MAINTENANCE_OFF") {
-      setControllerMode(MODE_MAINTENANCE_OFF);
-    } else if (message == "MAINTENANCE_FORCED_ON") {
-      setControllerMode(MODE_MAINTENANCE_FORCED_ON);
-    }
+    if (message == "AUTO") setControllerMode(MODE_AUTO);
+    else if (message == "OFF") setControllerMode(MODE_OFF);
+    else if (message == "MAINTENANCE_ON") setControllerMode(MODE_MAINTENANCE_ON);
+    else if (message == "MAINTENANCE_OFF") setControllerMode(MODE_MAINTENANCE_OFF);
+    else if (message == "MAINTENANCE_FORCED_ON") setControllerMode(MODE_MAINTENANCE_FORCED_ON);
   }
 }
 
@@ -251,18 +245,18 @@ void setControllerMode(ControllerMode mode) {
       turnOffAllValves();
       break;
     case MODE_MAINTENANCE_ON:
-      enabled = true; // Allow the system to run in maintenance mode unless explicitly off
+      enabled = true;
       maintenanceMode = true;
       break;
     case MODE_MAINTENANCE_OFF:
-      enabled = false; // Explicitly disable the system
+      enabled = false;
       maintenanceMode = false;
       turnOffAllValves();
       break;
     case MODE_MAINTENANCE_FORCED_ON:
-      enabled = true; // Force the system to run regardless of conditions
+      enabled = true;
       maintenanceMode = true;
-      valveCycleActive = true; // Start as if motion was detected
+      valveCycleActive = true;
       publishStatus("ON");
       switchRandomValves();
       break;
@@ -271,7 +265,6 @@ void setControllerMode(ControllerMode mode) {
 }
 
 void setup() {
-  EEPROM.begin(64);
   randomSeed(analogRead(0));
   scheduleNextReset();
 
